@@ -1,0 +1,66 @@
+simulation:
+  random_seed: 42
+  time_steps: 40 # each step represents 1 simulated minute
+
+  road:
+    num_lanes: 4
+    lane_capacity: 20 # base car capacity per general lane (vehicles/minute)
+    free_flow_time: 2.0 # minutes — travel time with zero congestion
+
+  # Arrival rates (vehicles/minute) per vehicle type per scenario.
+  # Values are Poisson distribution means; deterministic with random_seed=42.
+  arrival_rates:
+    normal:
+      car: 12.0
+      bus: 1.5
+      bicycle: 2.0
+      pedestrian: 8.0
+      emergency: 0.0
+
+    high_bus:
+      car: 10.0
+      bus: 5.5 # exceeds general-lane bus capacity → triggers BUS_PRIORITY
+      bicycle: 2.0
+      pedestrian: 8.0
+      emergency: 0.0
+
+    emergency:
+      car: 12.0
+      bus: 2.0
+      bicycle: 2.0
+      pedestrian: 8.0
+      emergency: 0.8 # ~55% chance per step → corridor stays active
+
+    pedestrian_surge:
+      car: 8.0
+      bus: 2.0
+      bicycle: 5.0
+      pedestrian: 22.0 # exceeds pedestrian threshold → triggers PEDESTRIAN_BUFFER
+      emergency: 0.0
+
+demand:
+  thresholds:
+    bus_priority: 7.0 # demand score to trigger bus-priority lane
+    bicycle_priority: 8.0 # demand score to trigger bicycle expansion
+    pedestrian_priority: 18.0 # demand score to trigger pedestrian buffer
+
+priority:
+  emergency_clearance_duration: 5 # steps to maintain corridor after last detection
+  min_activation_duration: 12 # minimum steps to hold a priority mode before reverting
+
+lanes:
+  # Default and safe-fallback are identical — general-purpose + bicycle lane
+  default_config:
+    - GENERAL
+    - GENERAL
+    - GENERAL
+    - BICYCLE
+
+  safe_fallback:
+    - GENERAL
+    - GENERAL
+    - GENERAL
+    - BICYCLE
+
+  min_general_lanes: 1 # hard constraint: always keep ≥1 general lane
+  transition_duration: 2 # steps a lane spends in TRANSITION state before new function activates
