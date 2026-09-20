@@ -1,4 +1,4 @@
-# Self-Reorganizing Roads 🚦
+<!-- # Self-Reorganizing Roads 🚦
 
 **Adaptive allocation of urban road space using real-time traffic demand**
 
@@ -366,4 +366,4 @@ streamlit run app/streamlit_app.py
 ```
 
 Random seed is fixed at `42` in `config/settings.yaml`.
-The same scenario always produces the same results.
+The same scenario always produces the same results. -->
