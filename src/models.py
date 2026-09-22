@@ -15,7 +15,7 @@ from typing import Dict, List, Optional
 
 
 class LaneFunction(str, Enum):
-    """zz
+    """
     Functions that a physical lane can be assigned to.
 
     The physical lane does NOT move — only its assigned function changes.
@@ -158,16 +158,39 @@ class MetricsSnapshot:
 
     All values are computed from the simulation — never hard-coded.
     Label as "Simulated result — not a real-world measurement."
+
+    Throughput definitions
+    ─────────────────────
+    throughput          — per-type departure counts (dict)
+    vehicle_throughput  — car + bus + bicycle + emergency  (NOT pedestrian)
+    pedestrian_flow     — pedestrian departures only
+    motor_throughput    — car + bus + emergency  (motorized only)
+    road_user_flow      — all departures (vehicles + pedestrians); use this
+                          label explicitly; do NOT call it "vehicle throughput"
     """
 
     timestamp: int
-    travel_times: Dict[str, float]  # minutes, by vehicle type
-    queue_lengths: Dict[str, float]  # vehicle count, by type
-    throughput: Dict[str, float]  # vehicles cleared, by type
-    total_throughput: float
+    travel_times: Dict[str, float]  # minutes, by type
+    queue_lengths: Dict[str, float]  # count waiting, by type
+    throughput: Dict[str, float]  # departures, by type
+    road_user_flow: float  # total departures all types (vehicles + peds)
     bus_delay: float  # minutes above free-flow for buses
+    # Separated throughput breakdowns (pedestrians ≠ vehicles)
+    vehicle_throughput: float = 0.0  # car + bus + bicycle + emergency
+    pedestrian_flow: float = 0.0  # pedestrian departures
+    motor_throughput: float = 0.0  # car + bus + emergency
+    # Emergency-specific metrics
+    emergency_queue: float = 0.0
+    emergency_arrivals: float = 0.0
+    emergency_departures: float = 0.0
+    # Context
     lane_config: Optional[List[LaneFunction]] = None
     system_state: str = "NORMAL"
+
+    # Back-compat alias so existing code using .total_throughput still works
+    @property
+    def total_throughput(self) -> float:
+        return self.road_user_flow
 
 
 @dataclass
@@ -177,7 +200,20 @@ class ScenarioMetrics:
     scenario_name: str
     avg_travel_times: Dict[str, float] = field(default_factory=dict)
     avg_queue_lengths: Dict[str, float] = field(default_factory=dict)
-    avg_throughput: float = 0.0
+    avg_road_user_flow: float = 0.0  # total road users (vehicles + peds)
+    avg_vehicle_throughput: float = 0.0  # vehicles only (no pedestrians)
+    avg_pedestrian_flow: float = 0.0
+    avg_motor_throughput: float = 0.0
     total_vehicles_served: float = 0.0
     avg_bus_delay: float = 0.0
+    # Emergency metrics
+    avg_emergency_queue: float = 0.0
+    max_emergency_queue: float = 0.0
+    total_emergency_arrivals: float = 0.0
+    total_emergency_departures: float = 0.0
     snapshots: List[MetricsSnapshot] = field(default_factory=list)
+
+    # Back-compat alias
+    @property
+    def avg_throughput(self) -> float:
+        return self.avg_vehicle_throughput

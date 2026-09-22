@@ -18,9 +18,7 @@ All thresholds come from config (settings.yaml), not from this file.
 from __future__ import annotations
 from typing import List
 
-from src.models import (
-    DemandEstimate, LaneFunction, PriorityDecision, SafetyAssessment
-)
+from src.models import DemandEstimate, LaneFunction, PriorityDecision, SafetyAssessment
 from src.demand.demand_estimator import DemandEstimator
 
 
@@ -33,10 +31,10 @@ class PriorityEngine:
     """
 
     def __init__(self, config: dict, demand_estimator: DemandEstimator) -> None:
-        self.config            = config
-        self.demand_estimator  = demand_estimator
-        self.num_lanes         = config["simulation"]["road"]["num_lanes"]
-        self._thresholds       = config["demand"]["thresholds"]
+        self.config = config
+        self.demand_estimator = demand_estimator
+        self.num_lanes = config["simulation"]["road"]["num_lanes"]
+        self._thresholds = config["demand"]["thresholds"]
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -44,8 +42,8 @@ class PriorityEngine:
 
     def decide(
         self,
-        demand:           DemandEstimate,
-        current_config:   List[LaneFunction],
+        demand: DemandEstimate,
+        current_config: List[LaneFunction],
         safety_assessment: SafetyAssessment,
     ) -> PriorityDecision:
         """
@@ -61,47 +59,47 @@ class PriorityEngine:
         # ── LEVEL 1: SAFETY ──────────────────────────────────────────────
         if not safety_assessment.is_safe:
             return PriorityDecision(
-                action         = "ENFORCE_SAFE_FALLBACK",
-                priority_level = "SAFETY",
-                reason         = (
+                action="ENFORCE_SAFE_FALLBACK",
+                priority_level="SAFETY",
+                reason=(
                     "Safety constraint violated in current configuration. "
                     f"Violations: {'; '.join(safety_assessment.violations)} "
                     "Reverting to safe default configuration."
                 ),
-                target_config  = None,   # SafetyManager provides the fallback
-                confidence     = 1.0,
+                target_config=None,  # SafetyManager provides the fallback
+                confidence=1.0,
             )
 
         # ── LEVEL 2: EMERGENCY VEHICLES ──────────────────────────────────
         if demand.emergency_flag:
             target = self._build_emergency_config(current_config)
             return PriorityDecision(
-                action         = "ACTIVATE_EMERGENCY_CORRIDOR",
-                priority_level = "EMERGENCY",
-                reason         = (
+                action="ACTIVATE_EMERGENCY_CORRIDOR",
+                priority_level="EMERGENCY",
+                reason=(
                     "Emergency vehicle detected. "
                     "Creating protected emergency corridor on lane 1. "
                     "All other traffic directed to remaining lanes. "
                     "Corridor maintained for clearance period after detection."
                 ),
-                target_config  = target,
-                confidence     = 0.95,
+                target_config=target,
+                confidence=0.95,
             )
 
         # ── LEVEL 3: PEDESTRIAN / CYCLIST SURGE ──────────────────────────
         if self.demand_estimator.is_pedestrian_surge(demand):
             target = self._build_pedestrian_config(current_config)
             return PriorityDecision(
-                action         = "ACTIVATE_PEDESTRIAN_BUFFER",
-                priority_level = "PEDESTRIAN_CYCLIST",
-                reason         = (
+                action="ACTIVATE_PEDESTRIAN_BUFFER",
+                priority_level="PEDESTRIAN_CYCLIST",
+                reason=(
                     f"Pedestrian demand score {demand.pedestrian_demand:.1f} exceeds "
                     f"threshold {self._thresholds['pedestrian_priority']:.1f}. "
                     "Allocating additional protected space for pedestrians and cyclists. "
                     "Vehicle capacity temporarily reduced on one lane."
                 ),
-                target_config  = target,
-                confidence     = 0.85,
+                target_config=target,
+                confidence=0.85,
             )
 
         # ── LEVEL 4: PUBLIC TRANSPORT ─────────────────────────────────────
@@ -113,45 +111,47 @@ class PriorityEngine:
         if demand.bus_demand >= bus_threshold:
             target = self._build_bus_priority_config(current_config)
             return PriorityDecision(
-                action         = "ACTIVATE_BUS_PRIORITY",
-                priority_level = "PUBLIC_TRANSPORT",
-                reason         = (
+                action="ACTIVATE_BUS_PRIORITY",
+                priority_level="PUBLIC_TRANSPORT",
+                reason=(
                     f"Bus demand score {demand.bus_demand:.1f} exceeds "
                     f"threshold {self._thresholds['bus_priority']:.1f}. "
                     "Allocating dedicated bus-priority lane to reduce public-transport delay. "
                     "General traffic retains remaining lanes."
                 ),
-                target_config  = target,
-                confidence     = 0.90,
+                target_config=target,
+                confidence=0.90,
             )
 
         # ── LEVEL 5: GENERAL TRAFFIC — maintain / revert to normal ────────
         already_ped = LaneFunction.PEDESTRIAN_BUFFER in current_config
-        ped_threshold = self._thresholds["pedestrian_priority"] * (0.6 if already_ped else 1.0)
+        ped_threshold = self._thresholds["pedestrian_priority"] * (
+            0.6 if already_ped else 1.0
+        )
 
         if demand.pedestrian_demand >= ped_threshold and already_ped:
             # Maintain pedestrian buffer while demand remains elevated
             return PriorityDecision(
-                action         = "ACTIVATE_PEDESTRIAN_BUFFER",
-                priority_level = "PEDESTRIAN_CYCLIST",
-                reason         = (
+                action="ACTIVATE_PEDESTRIAN_BUFFER",
+                priority_level="PEDESTRIAN_CYCLIST",
+                reason=(
                     f"Pedestrian demand score {demand.pedestrian_demand:.1f} remains above "
                     f"deactivation level {ped_threshold:.1f}. Maintaining pedestrian buffer."
                 ),
-                target_config  = list(current_config),
-                confidence     = 0.85,
+                target_config=list(current_config),
+                confidence=0.85,
             )
 
         return PriorityDecision(
-            action         = "MAINTAIN_NORMAL",
-            priority_level = "GENERAL_TRAFFIC",
-            reason         = (
+            action="MAINTAIN_NORMAL",
+            priority_level="GENERAL_TRAFFIC",
+            reason=(
                 "No special-priority condition detected. "
                 "All demand scores are within normal parameters. "
                 "Maintaining general-purpose lane configuration."
             ),
-            target_config  = self._build_normal_config(),
-            confidence     = 0.95,
+            target_config=self._build_normal_config(),
+            confidence=0.95,
         )
 
     # ------------------------------------------------------------------
@@ -193,14 +193,25 @@ class PriorityEngine:
         self, current: List[LaneFunction]
     ) -> List[LaneFunction]:
         """
-        Establish emergency corridor on lane 0 (innermost / contraflow position).
+        Produce a canonical, safety-valid emergency configuration.
 
-        Avoids the bicycle lane (last lane).
-        Maintains any existing BUS_PRIORITY assignment on other lanes.
+        Always returns [EMERGENCY, GENERAL, …, BICYCLE] regardless of what
+        lower-priority functions (BUS_PRIORITY, PEDESTRIAN_BUFFER, …) are
+        currently active.  This guarantees:
+          - exactly one EMERGENCY lane (lane 0)
+          - at least one GENERAL lane
+          - no EMERGENCY + PEDESTRIAN_BUFFER conflict
+          - BICYCLE preserved on the last lane where n >= 2
+
+        Emergency safely overrides BUS_PRIORITY and PEDESTRIAN_BUFFER rather
+        than triggering a safety fallback because the current config happens
+        to contain an incompatible lower-priority function.
         """
-        config = list(current)
-        if config[0] != LaneFunction.EMERGENCY:
-            config[0] = LaneFunction.EMERGENCY
+        n = self.num_lanes
+        config = [LaneFunction.GENERAL] * n
+        config[0] = LaneFunction.EMERGENCY
+        if n >= 2:
+            config[n - 1] = LaneFunction.BICYCLE
         return config
 
     def _build_pedestrian_config(

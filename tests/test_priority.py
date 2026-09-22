@@ -146,3 +146,91 @@ def test_emergency_has_high_confidence(config):
     eng = PriorityEngine(config, est)
     dec = eng.decide(_demand(emergency=True), [G, G, G, BI], _safe())
     assert dec.confidence >= 0.9
+
+
+# ── Emergency override regression tests (Issue 3) ─────────────────────────────
+
+
+def test_emergency_from_normal_produces_safe_config(config):
+    """Emergency from NORMAL state must produce a safety-valid configuration."""
+    from src.safety.safety_manager import SafetyManager
+
+    sm = SafetyManager(config)
+    est = DemandEstimator(config)
+    eng = PriorityEngine(config, est)
+
+    current = [G, G, G, BI]
+    dec = eng.decide(_demand(emergency=True), current, _safe())
+    assert dec.target_config is not None
+    assert sm.assess(dec.target_config).is_safe
+    assert LaneFunction.EMERGENCY in dec.target_config
+
+
+def test_emergency_from_bus_priority_produces_safe_config(config):
+    """Emergency must safely override BUS_PRIORITY without a safety fallback."""
+    from src.safety.safety_manager import SafetyManager
+
+    sm = SafetyManager(config)
+    est = DemandEstimator(config)
+    eng = PriorityEngine(config, est)
+
+    current = [G, LaneFunction.BUS_PRIORITY, G, BI]
+    dec = eng.decide(_demand(emergency=True), current, _safe())
+    assert dec.action == "ACTIVATE_EMERGENCY_CORRIDOR"
+    assert dec.target_config is not None
+    result = sm.assess(dec.target_config)
+    assert result.is_safe, f"Config not safe: {result.violations}"
+    assert LaneFunction.EMERGENCY in dec.target_config
+    # BUS_PRIORITY should be cleared in the canonical emergency layout
+    assert LaneFunction.BUS_PRIORITY not in dec.target_config
+
+
+def test_emergency_from_pedestrian_buffer_produces_safe_config(config):
+    """Emergency must safely override PEDESTRIAN_BUFFER.
+
+    Previously, _build_emergency_config patched lane 0 onto the current config,
+    which could produce [EMERGENCY, GENERAL, PEDESTRIAN_BUFFER, BICYCLE] — a
+    globally incompatible combination that the safety manager would reject,
+    preventing the emergency corridor from ever activating.
+    """
+    from src.safety.safety_manager import SafetyManager
+
+    sm = SafetyManager(config)
+    est = DemandEstimator(config)
+    eng = PriorityEngine(config, est)
+
+    current = [G, G, LaneFunction.PEDESTRIAN_BUFFER, BI]
+    dec = eng.decide(_demand(emergency=True), current, _safe())
+    assert dec.action == "ACTIVATE_EMERGENCY_CORRIDOR"
+    assert dec.target_config is not None
+
+    result = sm.assess(dec.target_config)
+    assert (
+        result.is_safe
+    ), f"Emergency config must be safe but got violations: {result.violations}"
+    assert LaneFunction.EMERGENCY in dec.target_config
+    assert (
+        LaneFunction.PEDESTRIAN_BUFFER not in dec.target_config
+    ), "PEDESTRIAN_BUFFER must not appear with EMERGENCY"
+
+
+def test_emergency_canonical_layout_four_lanes(config):
+    """For a 4-lane road the canonical emergency layout is exactly
+    [EMERGENCY, GENERAL, GENERAL, BICYCLE]."""
+    from src.models import LaneFunction as LF
+
+    est = DemandEstimator(config)
+    eng = PriorityEngine(config, est)
+
+    for current in [
+        [G, G, G, BI],
+        [G, LaneFunction.BUS_PRIORITY, G, BI],
+        [G, G, LaneFunction.PEDESTRIAN_BUFFER, BI],
+    ]:
+        dec = eng.decide(_demand(emergency=True), current, _safe())
+        assert dec.target_config == [
+            LF.EMERGENCY,
+            LF.GENERAL,
+            LF.GENERAL,
+            LF.BICYCLE,
+        ], f"Unexpected layout for current={current}: {dec.target_config}"

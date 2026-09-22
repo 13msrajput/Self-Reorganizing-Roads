@@ -60,6 +60,7 @@ def test_bus_delay_is_zero_at_free_flow(config):
 
 
 def test_throughput_matches_departures(config):
+    """road_user_flow must equal the sum of all departures."""
     calc = MetricsCalculator(config)
     deps = {
         "car": 10.0,
@@ -76,7 +77,9 @@ def test_throughput_matches_departures(config):
         occupancy=0.0,
     )
     snap = calc.record(state, _cap(), [G, G, G, BI])
-    assert snap.total_throughput == pytest.approx(15.0, rel=0.01)
+    assert snap.road_user_flow == pytest.approx(15.0, rel=0.01)
+    # vehicle_throughput same here (no pedestrians)
+    assert snap.vehicle_throughput == pytest.approx(15.0, rel=0.01)
 
 
 # ── Aggregation ───────────────────────────────────────────────────────────────
@@ -129,7 +132,7 @@ def test_comparison_shows_improvement_when_bus_time_lower(config):
             "pedestrian": 0,
             "emergency": 0,
         },
-        avg_throughput=15.0,
+        avg_vehicle_throughput=15.0,
         avg_bus_delay=2.0,
     )
     opt = ScenarioMetrics(
@@ -148,13 +151,13 @@ def test_comparison_shows_improvement_when_bus_time_lower(config):
             "pedestrian": 0,
             "emergency": 0,
         },
-        avg_throughput=16.0,
+        avg_vehicle_throughput=16.0,
         avg_bus_delay=0.2,
     )
     cmp = MetricsCalculator.compare(base, opt)
     assert cmp["bus_travel_time"]["improved"] is True
     assert cmp["bus_queue"]["improved"] is True
-    assert cmp["throughput"]["improved"] is True
+    assert cmp["vehicle_throughput"]["improved"] is True
 
 
 def test_comparison_shows_degradation_when_car_time_higher(config):
@@ -174,7 +177,7 @@ def test_comparison_shows_degradation_when_car_time_higher(config):
             "pedestrian": 0,
             "emergency": 0,
         },
-        avg_throughput=15.0,
+        avg_vehicle_throughput=15.0,
         avg_bus_delay=0.0,
     )
     opt = ScenarioMetrics(
@@ -193,7 +196,7 @@ def test_comparison_shows_degradation_when_car_time_higher(config):
             "pedestrian": 0,
             "emergency": 0,
         },
-        avg_throughput=15.0,
+        avg_vehicle_throughput=15.0,
         avg_bus_delay=0.0,
     )
     cmp = MetricsCalculator.compare(base, opt)
@@ -224,7 +227,152 @@ def test_metrics_generated_from_simulation_not_hardcoded(config):
         calc2.record(s, cap, cfg)
     bus_summary = calc2.get_summary("high_bus")
 
-    # Different scenarios → different metrics (not the same hard-coded value)
     assert (
         normal_summary.avg_queue_lengths["bus"] != bus_summary.avg_queue_lengths["bus"]
     ), "Bus queue should differ between normal and high_bus scenarios"
+
+
+# ── Throughput separation regression tests (Issue 4) ─────────────────────────
+
+
+def test_vehicle_throughput_excludes_pedestrians(config):
+    """Pedestrian departures must NOT appear in vehicle_throughput."""
+    calc = MetricsCalculator(config)
+    deps = {
+        "car": 10.0,
+        "bus": 3.0,
+        "bicycle": 2.0,
+        "pedestrian": 25.0,
+        "emergency": 0.0,
+    }
+    state = TrafficState(
+        timestamp=1,
+        arrivals={k: 0.0 for k in deps},
+        queues={k: 0.0 for k in deps},
+        departures=deps,
+        occupancy=0.0,
+    )
+    snap = calc.record(state, _cap(), [G, G, G, BI])
+
+    # vehicle_throughput = car + bus + bicycle + emergency = 15.0
+    assert snap.vehicle_throughput == pytest.approx(
+        15.0, rel=0.01
+    ), "vehicle_throughput must be car+bus+bicycle+emergency, not include pedestrians"
+    # pedestrian_flow should be 25.0
+    assert snap.pedestrian_flow == pytest.approx(25.0, rel=0.01)
+    # road_user_flow is the combined total
+    assert snap.road_user_flow == pytest.approx(40.0, rel=0.01)
+    # Confirm pedestrians are not mixed in
+    assert snap.vehicle_throughput != snap.road_user_flow
+
+
+def test_motor_throughput_correct(config):
+    """motor_throughput = car + bus + emergency only."""
+    calc = MetricsCalculator(config)
+    deps = {
+        "car": 10.0,
+        "bus": 3.0,
+        "bicycle": 5.0,
+        "pedestrian": 20.0,
+        "emergency": 1.0,
+    }
+    state = TrafficState(
+        timestamp=1,
+        arrivals={k: 0.0 for k in deps},
+        queues={k: 0.0 for k in deps},
+        departures=deps,
+        occupancy=0.0,
+    )
+    snap = calc.record(state, _cap(), [G, G, G, BI])
+    # motor_throughput = car(10) + bus(3) + emergency(1) = 14
+    assert snap.motor_throughput == pytest.approx(14.0, rel=0.01)
+
+
+def test_pedestrian_flow_isolated(config):
+    """pedestrian_flow must equal pedestrian departures only."""
+    calc = MetricsCalculator(config)
+    deps = {
+        "car": 5.0,
+        "bus": 2.0,
+        "bicycle": 1.0,
+        "pedestrian": 30.0,
+        "emergency": 0.0,
+    }
+    state = TrafficState(
+        timestamp=1,
+        arrivals={k: 0.0 for k in deps},
+        queues={k: 0.0 for k in deps},
+        departures=deps,
+        occupancy=0.0,
+    )
+    snap = calc.record(state, _cap(), [G, G, G, BI])
+    assert snap.pedestrian_flow == pytest.approx(30.0, rel=0.01)
+    assert snap.vehicle_throughput == pytest.approx(8.0, rel=0.01)  # 5+2+1+0
+
+
+# ── Emergency metrics regression tests (Issue 5) ──────────────────────────────
+
+
+def test_emergency_queue_recorded(config):
+    """emergency_queue must be populated from simulation state."""
+    calc = MetricsCalculator(config)
+    state = TrafficState(
+        timestamp=1,
+        arrivals={"car": 0, "bus": 0, "bicycle": 0, "pedestrian": 0, "emergency": 2},
+        queues={"car": 0, "bus": 0, "bicycle": 0, "pedestrian": 0, "emergency": 3},
+        departures={"car": 0, "bus": 0, "bicycle": 0, "pedestrian": 0, "emergency": 2},
+        occupancy=0.0,
+        emergency_detected=True,
+    )
+    snap = calc.record(state, _cap(), [G, G, G, BI])
+    assert snap.emergency_queue == pytest.approx(3.0, rel=0.01)
+    assert snap.emergency_arrivals == pytest.approx(2.0, rel=0.01)
+    assert snap.emergency_departures == pytest.approx(2.0, rel=0.01)
+
+
+def test_scenario_emergency_aggregates(config):
+    """ScenarioMetrics must aggregate emergency metrics correctly."""
+    calc = MetricsCalculator(config)
+    zeros = {"car": 0, "bus": 0, "bicycle": 0, "pedestrian": 0, "emergency": 0}
+    emerg = {"car": 0, "bus": 0, "bicycle": 0, "pedestrian": 0, "emergency": 1}
+
+    for q_val in [0.0, 2.0, 4.0]:
+        state = TrafficState(
+            timestamp=1,
+            arrivals=emerg,
+            departures=emerg,
+            queues={**zeros, "emergency": q_val},
+            occupancy=0.0,
+            emergency_detected=(q_val > 0),
+        )
+        calc.record(state, _cap(), [G, G, G, BI])
+
+    summary = calc.get_summary("test_emerg")
+    assert summary.avg_emergency_queue == pytest.approx(2.0, rel=0.01)  # (0+2+4)/3
+    assert summary.max_emergency_queue == pytest.approx(4.0, rel=0.01)
+    assert summary.total_emergency_arrivals == pytest.approx(3.0, rel=0.01)
+    assert summary.total_emergency_departures == pytest.approx(3.0, rel=0.01)
+
+
+# ── Back-compat alias ─────────────────────────────────────────────────────────
+
+
+def test_total_throughput_alias_still_works(config):
+    """MetricsSnapshot.total_throughput must alias road_user_flow for back-compat."""
+    calc = MetricsCalculator(config)
+    deps = {
+        "car": 5.0,
+        "bus": 2.0,
+        "bicycle": 1.0,
+        "pedestrian": 10.0,
+        "emergency": 0.0,
+    }
+    state = TrafficState(
+        timestamp=1,
+        arrivals={k: 0.0 for k in deps},
+        queues={k: 0.0 for k in deps},
+        departures=deps,
+        occupancy=0.0,
+    )
+    snap = calc.record(state, _cap(), [G, G, G, BI])
+    assert snap.total_throughput == snap.road_user_flow
